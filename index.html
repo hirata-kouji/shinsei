@@ -159,12 +159,12 @@ dt{color:var(--gray);font-size:12px;padding-top:2px}
       <h2>承認者設定（承認者のみ）</h2>
       <label>役職</label>
       <select id="setRole">
-        <option value="">一般（承認しない）</option>
-        <option>総務課長</option><option>部長</option><option>常務</option><option>社長</option>
+        <option value="">一般（役職なし）</option>
+        <option>部長</option><option>総務課長</option><option>常務</option><option>社長</option><option>会長</option>
       </select>
-      <label>承認キー（会社から案内されたキー）</label>
+      <label>承認キー（部長・総務課長のみ必要）</label>
       <input id="setKey" type="password" placeholder="役職ごとの承認キー">
-      <p class="note">役職と承認キーを設定すると「承認」タブで決裁できます。キーはこの端末にのみ保存されます。</p>
+      <p class="note">承認するのは部長（土木部など）と総務課長（総務課）です。常務・社長・会長は承認キーなしで役職を選ぶと、新着申請が「一覧」タブのバッジで通知され、閲覧・コメントできます。</p>
     </div>
     <button class="btn" onclick="saveSettings()">設定を保存</button>
     <p class="note" style="text-align:center">㈱中西組　申請・休暇届アプリ v1.0</p>
@@ -198,7 +198,11 @@ const SYNC_URL = "https://script.google.com/macros/s/AKfycbzTc3fGYHO1hjGTn8sdJ5v
 
 /* ================= 基本データ ================= */
 const TYPE_NAMES = {kyuka:"休暇届", hankyu:"（半休）早退・遅刻届", kyujitsu:"休日出勤事前申請書", yakan:"夜間出勤事前申請書"};
-const ROUTES = {kyuka:["部長","常務","総務課長"], hankyu:["部長","総務課長"], kyujitsu:["部長","常務","社長","総務課長"], yakan:["部長","常務","社長","総務課長"]};
+// 承認者：総務課のメンバー → 総務課長、それ以外（土木部以下）→ 部長（1名承認）
+// 他の役職（常務・社長・会長など）は通知で閲覧・コメントできます
+const APPROVER_ROLES = ["部長","総務課長"];
+const ALL_ROLES = ["部長","総務課長","常務","社長","会長"];
+function routeFor(bu, ka){ return (String(bu||"")+String(ka||"")).includes("総務") ? ["総務課長"] : ["部長"]; }
 let S = JSON.parse(localStorage.getItem("shinsei_settings") || "{}");
 let APPS = JSON.parse(localStorage.getItem("shinsei_apps") || "[]");
 let QUEUE = JSON.parse(localStorage.getItem("shinsei_queue") || "[]");
@@ -324,7 +328,8 @@ function v(id){ const el=$(id); return el?el.value.trim():""; }
 function submitForm(){
   const a={id:uid(), type:currentType, name:S.name, sei:S.sei, mei:S.mei,
            dept:S.dept||"", bu:S.bu||"", ka:S.ka||"",
-           createdAt:new Date().toISOString(), status:"申請中", step:0, route:ROUTES[currentType], approvals:[]};
+           createdAt:new Date().toISOString(), status:"申請中", step:0,
+           route:routeFor(S.bu,S.ka), approvals:[], comments:[]};
   if(currentType==="kyuka"){
     a.fromDate=v("f_from"); a.toDate=v("f_to")||a.fromDate; a.days=v("f_days"); a.kind=v("f_kind"); a.reason=v("f_reason"); a.note=v("f_note");
     if(!a.fromDate||!a.reason){ toast("日付と事由を入力してください"); return; }
@@ -337,6 +342,7 @@ function submitForm(){
     if(!a.site||!a.fromDate||!a.reason){ toast("現場名・実施日・理由を入力してください"); return; }
   }
   APPS.unshift(a); saveLocal();
+  SEEN[a.id]=stampOf(a); localStorage.setItem("shinsei_seen", JSON.stringify(SEEN));
   queueAction({action:"submit", app:a});
   closeForm(); toast("申請しました（" + TYPE_NAMES[currentType] + "）");
   showTab("list");
@@ -347,19 +353,28 @@ function pendingForMe(){
   if(!S.role) return [];
   return APPS.filter(a=>a.status==="申請中" && a.route && a.route[a.step]===S.role);
 }
-// 自分の申請で結果（決裁完了・却下）が出て、まだ確認していないもの
-function unreadMine(){
-  return APPS.filter(a=>a.name===S.name && (a.status==="決裁完了"||a.status==="却下") && SEEN[a.id]!==a.status);
+// 申請の状態スタンプ（状態・承認段階・コメント数が変わると「新着」扱い）
+function stampOf(a){ return (a.status||"")+"|"+(a.step||0)+"|"+((a.comments||[]).length); }
+// 未読：自分の申請の動き＋（役職者は）全員の申請の新着・更新
+function unreadList(){
+  return APPS.filter(a=>(a.name===S.name || S.role) && SEEN[a.id]!==stampOf(a));
+}
+function markSeen(a){
+  SEEN[a.id]=stampOf(a); localStorage.setItem("shinsei_seen", JSON.stringify(SEEN)); updateBadge();
 }
 function updateBadge(){
   $("tb-approve").dataset.n = String(pendingForMe().length);
-  $("tb-list").dataset.n = String(unreadMine().length);
+  $("tb-list").dataset.n = String(unreadList().length);
 }
 function renderApprove(){
   updateBadge();
   const info=$("approveInfo"), list=$("approveList");
   if(!S.role){
     info.innerHTML="<h2>承認</h2><p class='note'>承認者の方は、設定タブで役職と承認キーを登録してください。</p>";
+    list.innerHTML=""; return;
+  }
+  if(!APPROVER_ROLES.includes(S.role)){
+    info.innerHTML=`<h2>あなた（${esc(S.role)}）は閲覧役職です</h2><p class="note">全員の申請の新着・更新・コメントは「一覧」タブのバッジでお知らせします。詳細画面からコメントもできます。</p>`;
     list.innerHTML=""; return;
   }
   const mine=pendingForMe();
@@ -383,8 +398,10 @@ function itemHTML(a){
     : a.type==="kyuka" ? wareki(a.fromDate)+(a.toDate&&a.toDate!==a.fromDate?" 〜 "+wareki(a.toDate):"")+"（"+(a.days||"?")+"日間）"
     : (a.site||"")+"　"+wareki(a.fromDate);
   const next = a.status==="申請中" ? "　▶ "+a.route[a.step]+"の承認待ち" : "";
+  const isNew = (a.name===S.name || S.role) && SEEN[a.id]!==stampOf(a);
+  const nc = (a.comments||[]).length;
   return `<div class="item" onclick="openDetail('${a.id}')">
-    <div class="t1"><span class="ty">${esc(TYPE_NAMES[a.type]||a.type)}</span><span class="st ${st}">${st}</span></div>
+    <div class="t1"><span class="ty">${isNew?'<span style="color:var(--ng)">●</span> ':''}${esc(TYPE_NAMES[a.type]||a.type)}${nc?` <span style="font-weight:normal;font-size:12px;color:var(--gray)">💬${nc}</span>`:''}</span><span class="st ${st}">${st}</span></div>
     <div class="meta">${esc(a.name)}（${esc(a.dept||"")}）</div>
     <div class="meta">${esc(dateLine)}${esc(next)}</div>
   </div>`;
@@ -393,9 +410,7 @@ function itemHTML(a){
 /* ================= 詳細モーダル ================= */
 function openDetail(id){
   const a=APPS.find(x=>x.id===id); if(!a) return;
-  if(a.name===S.name && SEEN[a.id]!==a.status){
-    SEEN[a.id]=a.status; localStorage.setItem("shinsei_seen", JSON.stringify(SEEN)); updateBadge();
-  }
+  markSeen(a);
   const route=(a.route||[]).map((r,i)=>{
     const cls = i<a.step ? "done" : (i===a.step && a.status==="申請中" ? "now" : "");
     const ap=(a.approvals||[])[i];
@@ -413,6 +428,15 @@ function openDetail(id){
   if(a.status==="却下") dl+=`<dt>却下</dt><dd>${esc(a.rejectedBy||"")}<br>${esc(a.rejectReason||"")}</dd>`;
   if(a.pdfUrl) dl+=`<dt>書類PDF</dt><dd><a href="${a.pdfUrl}" target="_blank">Driveで開く</a></dd>`;
   dl+=`</dl>`;
+
+  // コメント欄（役職者・申請者が書き込めます）
+  let cmt=`<div style="border-top:1px solid var(--line);padding-top:10px;margin-top:4px"><b style="font-size:14px">💬 コメント</b>`;
+  const cs=a.comments||[];
+  cmt+= cs.length
+    ? cs.map(c=>`<div style="background:#f5f7fa;border-radius:8px;padding:8px 10px;margin-top:8px;font-size:13px"><b>${esc(c.name)}</b>${c.role?`（${esc(c.role)}）`:""}<span style="color:var(--gray);font-size:11px">　${esc(c.date)}</span><br>${esc(c.text)}</div>`).join("")
+    : `<p class="note">まだコメントはありません</p>`;
+  cmt+=`<div class="row" style="margin-top:8px;align-items:flex-end"><textarea id="cmtText" style="min-height:44px" placeholder="コメントを入力…"></textarea><button class="btn sm" style="margin:0;white-space:nowrap" onclick="addComment('${a.id}')">送信</button></div></div>`;
+  dl+=cmt;
 
   let btns="";
   const isMyTurn = a.status==="申請中" && S.role && a.route[a.step]===S.role;
@@ -438,7 +462,7 @@ function approve(id){
   if(!confirm(S.role+"として承認します。よろしいですか？")) return;
   const a=APPS.find(x=>x.id===id);
   if(a){ a.approvals=a.approvals||[]; a.approvals.push({role:S.role,name:S.name,date:todayISO()}); a.step++;
-    if(a.step>=a.route.length){ a.status="決裁完了"; a.completedAt=todayISO(); } saveLocal(); }
+    if(a.step>=a.route.length){ a.status="決裁完了"; a.completedAt=todayISO(); } saveLocal(); markSeen(a); }
   queueAction({action:"approve", id:id, role:S.role, key:S.key, approverName:S.name});
   closeModal(); toast("承認しました"); renderApprove(); renderList();
 }
@@ -447,14 +471,26 @@ function reject(id){
   const reason=prompt("却下の理由（申請者に通知されます）","");
   if(reason===null) return;
   const a=APPS.find(x=>x.id===id);
-  if(a){ a.status="却下"; a.rejectReason=reason; a.rejectedBy=S.role+"　"+S.name; saveLocal(); }
+  if(a){ a.status="却下"; a.rejectReason=reason; a.rejectedBy=S.role+"　"+S.name; saveLocal(); markSeen(a); }
   queueAction({action:"reject", id:id, role:S.role, key:S.key, approverName:S.name, comment:reason});
   closeModal(); toast("却下しました"); renderApprove(); renderList();
+}
+function addComment(id){
+  const a=APPS.find(x=>x.id===id); if(!a) return;
+  const t=($("cmtText")?$("cmtText").value.trim():"");
+  if(!t){ toast("コメントを入力してください"); return; }
+  if(!S.name){ toast("設定タブで姓・名を入力してください"); return; }
+  const now=new Date();
+  const c={name:S.name, role:S.role||"", text:t,
+           date: todayISO()+" "+String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0")};
+  a.comments=a.comments||[]; a.comments.push(c); saveLocal(); markSeen(a);
+  queueAction({action:"comment", id:id, name:S.name, role:S.role||"", text:t});
+  openDetail(id); toast("コメントを送信しました");
 }
 function cancelApp(id){
   if(!confirm("この申請を取下げます。よろしいですか？")) return;
   const a=APPS.find(x=>x.id===id);
-  if(a){ a.status="取下げ"; saveLocal(); }
+  if(a){ a.status="取下げ"; saveLocal(); markSeen(a); }
   queueAction({action:"cancel", id:id, name:S.name});
   closeModal(); toast("取下げました"); renderList();
 }
@@ -462,14 +498,16 @@ function cancelApp(id){
 /* ================= 様式表示・印刷 ================= */
 function approvalOf(a,role){ const h=(a.approvals||[]).filter(x=>x.role===role)[0]; return h||{name:"",date:""}; }
 function stampCell(ap){ return `<td class="stamp">${ap.name?`<span class="hanko">${esc(ap.name)}</span><br><span class="small">${esc(ap.date)}</span>`:""}</td>`; }
+function stampTable(a,width){
+  const role=(a.route&&a.route[0])||"部長";
+  return `<table style="width:${width};margin-left:auto"><tr><th class="stamphead">${esc(role)}</th></tr><tr>${stampCell(approvalOf(a,role))}</tr></table>`;
+}
 function kindRow(kind){ return ["有給休暇","特別休暇","慶弔休暇"].map(k=>k===kind?`<span class="maru">${k}</span>`:k).join("　　　"); }
 
 function sheetHTML(a){
   if(a.type==="kyuka"){
-    const b=approvalOf(a,"部長"),z=approvalOf(a,"常務"),so=approvalOf(a,"総務課長");
     return `<div class="sheet"><div class="right">${wareki(a.createdAt?a.createdAt.slice(0,10):"")}</div><h1>休　暇　届</h1>
-      <table style="width:62%;margin-left:auto"><tr><th class="stamphead">部長</th><th class="stamphead">常務</th><th class="stamphead">総務課長</th></tr>
-      <tr>${stampCell(b)}${stampCell(z)}${stampCell(so)}</tr></table>
+      ${stampTable(a,"26%")}
       <table style="width:45%;margin-top:4mm"><tr><td class="label">所　属</td><td>${esc(a.dept)}</td></tr><tr><td class="label">氏　名</td><td>${esc(a.name)}</td></tr></table>
       <table style="margin-top:4mm"><tr><td class="label">期　間</td><td class="center">${wareki(a.fromDate)}　から<br>${wareki(a.toDate)}　まで</td><td class="center" style="width:22mm">${esc(a.days)}日間</td></tr>
       <tr><td class="label">種　類</td><td colspan="2" class="center">${kindRow(a.kind)}</td></tr>
@@ -479,10 +517,8 @@ function sheetHTML(a){
       <p class="small">原則として、１週間前までに、遅くとも前々日までに所定の手続により会社に届け出をして下さい。</p></div>`;
   }
   if(a.type==="hankyu"){
-    const b=approvalOf(a,"部長"),so=approvalOf(a,"総務課長");
     return `<div class="sheet"><div class="right">${wareki(a.createdAt?a.createdAt.slice(0,10):"")}</div><h1>（半休）早退・遅刻　届</h1>
-      <table style="width:45%;margin-left:auto"><tr><th class="stamphead">部長</th><th class="stamphead">総務課長</th></tr>
-      <tr>${stampCell(b)}${stampCell(so)}</tr></table>
+      ${stampTable(a,"26%")}
       <table style="width:45%;margin-top:4mm"><tr><td class="label">所　属</td><td>${esc(a.dept)}</td></tr><tr><td class="label">氏　名</td><td>${esc(a.name)}</td></tr></table>
       <table style="margin-top:4mm"><tr><td class="label">期　間</td><td class="center">${wareki(a.date)}　${esc(a.time)}</td><td class="center" style="width:26mm">${esc(a.subtype)}</td></tr>
       <tr><td class="label">種　類</td><td colspan="2" class="center">${kindRow(a.kind)}</td></tr>
@@ -491,7 +527,6 @@ function sheetHTML(a){
       <p style="margin-top:3mm">承認日　${wareki(a.completedAt)}</p>
       <p class="small">原則として、１週間前までに、遅くとも前々日までに所定の手続により会社に届け出をして下さい。</p></div>`;
   }
-  const sh=approvalOf(a,"社長"),z=approvalOf(a,"常務"),b=approvalOf(a,"部長"),so=approvalOf(a,"総務課長");
   const title=a.type==="kyujitsu"?"休 日 出 勤 事 前 申 請 書":"夜 間 出 勤 事 前 申 請 書";
   return `<div class="sheet"><h1 style="letter-spacing:.15em">${title}</h1>
     <table style="width:55%"><tr><td class="label">氏　名</td><td>${esc(a.name)}</td></tr><tr><td class="label">現場名</td><td>${esc(a.site)}</td></tr></table>
@@ -503,9 +538,8 @@ function sheetHTML(a){
     <tr><td class="label tall">理　由</td><td class="tall">${esc(a.reason)}</td></tr>
     <tr><td class="label tall">備　考</td><td class="tall">${esc(a.note)}</td></tr></table>
     <p class="small" style="margin:3mm 0">※休日出勤を行った場合必ず　代休の申請を行う。</p>
-    <div style="width:100mm;margin-left:auto"><p class="center">承 認 決 裁</p>
-    <table><tr><th class="stamphead">社 長</th><th class="stamphead">常 務</th><th class="stamphead">部 長</th><th class="stamphead">総務課長</th></tr>
-    <tr>${stampCell(sh)}${stampCell(z)}${stampCell(b)}${stampCell(so)}</tr></table></div></div>`;
+    <div style="width:40mm;margin-left:auto"><p class="center">承 認 決 裁</p>
+    ${stampTable(a,"100%")}</div></div>`;
 }
 
 function printSheet(id){
