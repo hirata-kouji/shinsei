@@ -160,7 +160,7 @@ dt{color:var(--gray);font-size:12px;padding-top:2px}
       <label>役職</label>
       <select id="setRole">
         <option value="">一般（承認しない）</option>
-        <option>所属長</option><option>総務課長</option><option>部長</option><option>常務</option><option>社長</option>
+        <option>総務課長</option><option>部長</option><option>常務</option><option>社長</option>
       </select>
       <label>承認キー（会社から案内されたキー）</label>
       <input id="setKey" type="password" placeholder="役職ごとの承認キー">
@@ -198,7 +198,7 @@ const SYNC_URL = "https://script.google.com/macros/s/AKfycbzTc3fGYHO1hjGTn8sdJ5v
 
 /* ================= 基本データ ================= */
 const TYPE_NAMES = {kyuka:"休暇届", hankyu:"（半休）早退・遅刻届", kyujitsu:"休日出勤事前申請書", yakan:"夜間出勤事前申請書"};
-const ROUTES = {kyuka:["所属長","部長","常務","総務課長"], hankyu:["所属長","部長","総務課長"], kyujitsu:["部長","常務","社長","総務課長"], yakan:["部長","常務","社長","総務課長"]};
+const ROUTES = {kyuka:["部長","常務","総務課長"], hankyu:["部長","総務課長"], kyujitsu:["部長","常務","社長","総務課長"], yakan:["部長","常務","社長","総務課長"]};
 let S = JSON.parse(localStorage.getItem("shinsei_settings") || "{}");
 let APPS = JSON.parse(localStorage.getItem("shinsei_apps") || "[]");
 let QUEUE = JSON.parse(localStorage.getItem("shinsei_queue") || "[]");
@@ -466,10 +466,10 @@ function kindRow(kind){ return ["有給休暇","特別休暇","慶弔休暇"].ma
 
 function sheetHTML(a){
   if(a.type==="kyuka"){
-    const s=approvalOf(a,"所属長"),b=approvalOf(a,"部長"),z=approvalOf(a,"常務"),so=approvalOf(a,"総務課長");
+    const b=approvalOf(a,"部長"),z=approvalOf(a,"常務"),so=approvalOf(a,"総務課長");
     return `<div class="sheet"><div class="right">${wareki(a.createdAt?a.createdAt.slice(0,10):"")}</div><h1>休　暇　届</h1>
-      <table style="width:78%;margin-left:auto"><tr><th class="stamphead">所属長</th><th class="stamphead">部長</th><th class="stamphead">常務</th><th class="stamphead">総務課長</th></tr>
-      <tr>${stampCell(s)}${stampCell(b)}${stampCell(z)}${stampCell(so)}</tr></table>
+      <table style="width:62%;margin-left:auto"><tr><th class="stamphead">部長</th><th class="stamphead">常務</th><th class="stamphead">総務課長</th></tr>
+      <tr>${stampCell(b)}${stampCell(z)}${stampCell(so)}</tr></table>
       <table style="width:45%;margin-top:4mm"><tr><td class="label">所　属</td><td>${esc(a.dept)}</td></tr><tr><td class="label">氏　名</td><td>${esc(a.name)}</td></tr></table>
       <table style="margin-top:4mm"><tr><td class="label">期　間</td><td class="center">${wareki(a.fromDate)}　から<br>${wareki(a.toDate)}　まで</td><td class="center" style="width:22mm">${esc(a.days)}日間</td></tr>
       <tr><td class="label">種　類</td><td colspan="2" class="center">${kindRow(a.kind)}</td></tr>
@@ -479,10 +479,10 @@ function sheetHTML(a){
       <p class="small">原則として、１週間前までに、遅くとも前々日までに所定の手続により会社に届け出をして下さい。</p></div>`;
   }
   if(a.type==="hankyu"){
-    const s=approvalOf(a,"所属長"),b=approvalOf(a,"部長"),so=approvalOf(a,"総務課長");
+    const b=approvalOf(a,"部長"),so=approvalOf(a,"総務課長");
     return `<div class="sheet"><div class="right">${wareki(a.createdAt?a.createdAt.slice(0,10):"")}</div><h1>（半休）早退・遅刻　届</h1>
-      <table style="width:65%;margin-left:auto"><tr><th class="stamphead">所属長</th><th class="stamphead">部長</th><th class="stamphead">総務課長</th></tr>
-      <tr>${stampCell(s)}${stampCell(b)}${stampCell(so)}</tr></table>
+      <table style="width:45%;margin-left:auto"><tr><th class="stamphead">部長</th><th class="stamphead">総務課長</th></tr>
+      <tr>${stampCell(b)}${stampCell(so)}</tr></table>
       <table style="width:45%;margin-top:4mm"><tr><td class="label">所　属</td><td>${esc(a.dept)}</td></tr><tr><td class="label">氏　名</td><td>${esc(a.name)}</td></tr></table>
       <table style="margin-top:4mm"><tr><td class="label">期　間</td><td class="center">${wareki(a.date)}　${esc(a.time)}</td><td class="center" style="width:26mm">${esc(a.subtype)}</td></tr>
       <tr><td class="label">種　類</td><td colspan="2" class="center">${kindRow(a.kind)}</td></tr>
