@@ -162,9 +162,15 @@ dt{color:var(--gray);font-size:12px;padding-top:2px}
         <option value="">一般（役職なし）</option>
         <option>部長</option><option>総務課長</option><option>常務</option><option>社長</option><option>会長</option>
       </select>
-      <label>承認キー（部長・総務課長のみ必要）</label>
+      <label>承認キー（部長・総務課長・常務のみ必要）</label>
       <input id="setKey" type="password" placeholder="役職ごとの承認キー">
-      <p class="note">承認するのは部長（土木部など）と総務課長（総務課）です。常務・社長・会長は承認キーなしで役職を選ぶと、新着申請が「一覧」タブのバッジで通知され、閲覧・コメントできます。</p>
+      <p class="note">承認するのは部長（土木部などのメンバー）、総務課長（総務課のメンバー）、常務（部長本人の申請）です。社長・会長は承認キーなしで役職を選ぶと、新着申請が「一覧」タブのバッジで通知され、閲覧・コメントできます。</p>
+    </div>
+    <div class="card">
+      <h2>管理者設定（管理者のみ）</h2>
+      <label>管理者キー</label>
+      <input id="setAdminKey" type="password" placeholder="管理者キー（通常は空欄のまま）">
+      <p class="note">管理者キーを入力すると、申請の詳細画面から誤登録データの削除ができます。一般の方は空欄のままにしてください。</p>
     </div>
     <button class="btn" onclick="saveSettings()">設定を保存</button>
     <p class="note" style="text-align:center">㈱中西組　申請・休暇届アプリ v1.0</p>
@@ -198,11 +204,14 @@ const SYNC_URL = "https://script.google.com/macros/s/AKfycbzTc3fGYHO1hjGTn8sdJ5v
 
 /* ================= 基本データ ================= */
 const TYPE_NAMES = {kyuka:"休暇届", hankyu:"（半休）早退・遅刻届", kyujitsu:"休日出勤事前申請書", yakan:"夜間出勤事前申請書"};
-// 承認者：総務課のメンバー → 総務課長、それ以外（土木部以下）→ 部長（1名承認）
-// 他の役職（常務・社長・会長など）は通知で閲覧・コメントできます
-const APPROVER_ROLES = ["部長","総務課長"];
+// 承認者：部長本人の申請 → 常務、総務課のメンバー → 総務課長、それ以外（土木部以下）→ 部長（1名承認）
+// 承認者以外の役職（社長・会長など）は通知で閲覧・コメントできます
+const APPROVER_ROLES = ["部長","総務課長","常務"];
 const ALL_ROLES = ["部長","総務課長","常務","社長","会長"];
-function routeFor(bu, ka){ return (String(bu||"")+String(ka||"")).includes("総務") ? ["総務課長"] : ["部長"]; }
+function routeFor(bu, ka, role){
+  if(role==="部長") return ["常務"];
+  return (String(bu||"")+String(ka||"")).includes("総務") ? ["総務課長"] : ["部長"];
+}
 let S = JSON.parse(localStorage.getItem("shinsei_settings") || "{}");
 let APPS = JSON.parse(localStorage.getItem("shinsei_apps") || "[]");
 let QUEUE = JSON.parse(localStorage.getItem("shinsei_queue") || "[]");
@@ -236,6 +245,7 @@ function loadSettings(){
   $("setSei").value=S.sei||""; $("setMei").value=S.mei||"";
   $("setBu").value=S.bu||""; $("setKa").value=S.ka||"";
   $("setUrl").value=S.url||""; $("setRole").value=S.role||""; $("setKey").value=S.key||"";
+  $("setAdminKey").value=S.adminKey||"";
   if(SYNC_URL){ $("urlInputWrap").classList.add("hide"); $("urlBuiltin").classList.remove("hide"); }
 }
 function saveSettings(){
@@ -243,7 +253,8 @@ function saveSettings(){
   const bu=$("setBu").value.trim(), ka=$("setKa").value.trim();
   S={sei:sei, mei:mei, bu:bu, ka:ka,
      name:(sei+" "+mei).trim(), dept:(bu+(ka?" "+ka:"")).trim(),
-     url:$("setUrl").value.trim(), role:$("setRole").value, key:$("setKey").value.trim()};
+     url:$("setUrl").value.trim(), role:$("setRole").value, key:$("setKey").value.trim(),
+     adminKey:$("setAdminKey").value.trim()};
   localStorage.setItem("shinsei_settings", JSON.stringify(S));
   toast("設定を保存しました");
   sync(false);
@@ -328,8 +339,9 @@ function v(id){ const el=$(id); return el?el.value.trim():""; }
 function submitForm(){
   const a={id:uid(), type:currentType, name:S.name, sei:S.sei, mei:S.mei,
            dept:S.dept||"", bu:S.bu||"", ka:S.ka||"",
+           role:S.role||"",
            createdAt:new Date().toISOString(), status:"申請中", step:0,
-           route:routeFor(S.bu,S.ka), approvals:[], comments:[]};
+           route:routeFor(S.bu,S.ka,S.role), approvals:[], comments:[]};
   if(currentType==="kyuka"){
     a.fromDate=v("f_from"); a.toDate=v("f_to")||a.fromDate; a.days=v("f_days"); a.kind=v("f_kind"); a.reason=v("f_reason"); a.note=v("f_note");
     if(!a.fromDate||!a.reason){ toast("日付と事由を入力してください"); return; }
@@ -447,6 +459,9 @@ function openDetail(id){
   if(a.status==="申請中" && a.name===S.name){
     btns+=`<button class="btn sub" onclick="cancelApp('${a.id}')">申請を取下げる</button>`;
   }
+  if(S.adminKey){
+    btns+=`<button class="btn ng" onclick="adminDeleteApp('${a.id}')">🗑 この申請を削除（管理者）</button>`;
+  }
   btns+=`<button class="btn sub" onclick="printSheet('${a.id}')">🖨️ 様式を表示・印刷</button>`;
   btns+=`<button class="btn sub" onclick="sharePdfSheet('${a.id}')">📄 様式PDFを保存・共有</button>`;
 
@@ -474,6 +489,12 @@ function reject(id){
   if(a){ a.status="却下"; a.rejectReason=reason; a.rejectedBy=S.role+"　"+S.name; saveLocal(); markSeen(a); }
   queueAction({action:"reject", id:id, role:S.role, key:S.key, approverName:S.name, comment:reason});
   closeModal(); toast("却下しました"); renderApprove(); renderList();
+}
+function adminDeleteApp(id){
+  if(!confirm("管理者としてこの申請を完全に削除します。元に戻せません。よろしいですか？")) return;
+  APPS = APPS.filter(x=>x.id!==id); saveLocal();
+  queueAction({action:"adminDelete", id:id, key:S.adminKey});
+  closeModal(); toast("削除しました（管理者）"); renderList(); renderApprove(); updateBadge();
 }
 function addComment(id){
   const a=APPS.find(x=>x.id===id); if(!a) return;
